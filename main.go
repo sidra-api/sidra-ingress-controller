@@ -12,9 +12,9 @@ import (
 	"net/http"
 )
 
-type NginxConfig struct {
-	Namespace string `json:"namespace"`
+type NginxConfig struct {	
 	Ingress   string `json:"ingress"`
+	TypeEvent string `json:"typeEvent"`
 	Config    string `json:"config"`
 }
 
@@ -57,58 +57,66 @@ func main() {
 		log.Fatalf("Error creating kubernetes client: %v", err)
 	}
 
-	// Get list of all namespaces
-	namespaces, err := clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		log.Fatalf("Error getting namespaces: %v", err)
-	}
+	ingresses, err := clientset.NetworkingV1().Ingresses(metav1.NamespaceAll).List(context.TODO(), metav1.ListOptions{})
+	
+	// Generate nginx config for ingresses in this namespace
+	if len(ingresses.Items) > 0 {		
+		for _, ing := range ingresses.Items {
+			conf := NginxConfig{				
+				Ingress:   ing.Name,
+				TypeEvent: "CREATE",
+				Config:    "",
+			}
+			conf.Config += "server {\n"
+			conf.Config += "   listen 8080;\n"
+			conf.Config += fmt.Sprintf("  server_name %s;\n", ing.Spec.Rules[0].Host)
 
-	// Iterate through each namespace and get ingresses
-	for _, ns := range namespaces.Items {
-		ingresses, err := clientset.NetworkingV1().Ingresses(ns.Name).List(context.TODO(), metav1.ListOptions{})
-		if err != nil {
-			log.Printf("Error getting ingresses in namespace %s: %v", ns.Name, err)
-			continue
-		}
-
-		// Generate nginx config for ingresses in this namespace
-		if len(ingresses.Items) > 0 {
-			fmt.Printf("\n# Ingresses in namespace %s:\n", ns.Name)
-			for _, ing := range ingresses.Items {
-				conf := NginxConfig{
-					Namespace: ns.Name,
-					Ingress:   ing.Name,
-					Config:    "",
-				}
-				conf.Config += "server {\n"
-				conf.Config += "   listen 8080;\n"
-				conf.Config += fmt.Sprintf("  server_name %s;\n", ing.Spec.Rules[0].Host)
-
-				// Generate location blocks for each rule
-				for _, rule := range ing.Spec.Rules {
-					if rule.HTTP != nil {
-						for _, path := range rule.HTTP.Paths {
-							conf.Config += fmt.Sprintf("  location %s {\n", path.Path)
-							conf.Config += fmt.Sprintf("    proxy_pass http://%s:%v;\n",
-								PLUGIN_HUB_SERVICE_NAME,
-								PLUGIN_HUB_PORT,
-							)
-							conf.Config += fmt.Sprintf("    proxy_set_header ServiceName %s;\n", path.Backend.Service.Name)
-							conf.Config += fmt.Sprintf("    proxy_set_header ServicePort %d;\n", path.Backend.Service.Port.Number)
-							conf.Config += fmt.Sprintf("    proxy_set_header Host %s;\n", rule.Host)
-							conf.Config += fmt.Sprintf("    proxy_set_header Plugins %s;\n", ing.GetAnnotations()[SIDRA_PLUGINS_KEY])
-							conf.Config += "  }\n"
-						}
+			// Generate location blocks for each rule
+			for _, rule := range ing.Spec.Rules {
+				if rule.HTTP != nil {
+					for _, path := range rule.HTTP.Paths {
+						conf.Config += fmt.Sprintf("  location %s {\n", path.Path)
+						conf.Config += fmt.Sprintf("    proxy_pass http://%s:%v;\n",
+							PLUGIN_HUB_SERVICE_NAME,
+							PLUGIN_HUB_PORT,
+						)
+						conf.Config += fmt.Sprintf("    proxy_set_header ServiceName %s;\n", path.Backend.Service.Name)
+						conf.Config += fmt.Sprintf("    proxy_set_header ServicePort %d;\n", path.Backend.Service.Port.Number)
+						conf.Config += fmt.Sprintf("    proxy_set_header Host %s;\n", rule.Host)
+						conf.Config += fmt.Sprintf("    proxy_set_header Plugins %s;\n", ing.GetAnnotations()[SIDRA_PLUGINS_KEY])
+						conf.Config += "  }\n"
 					}
 				}
-				conf.Config += "}\n"
-
-				err := sendNginxConfig(conf)
-				if err != nil {
-					log.Printf("Error sending nginx config for ingress %s in namespace %s: %v", ing.Name, ns.Name, err)
-					continue
-				}
 			}
+			conf.Config += "}\n"
+
+			err := sendNginxConfig(conf)
+			if err != nil {
+				log.Printf("Error sending nginx config for ingress %s in namespace %s: %v", ing.Name, ns.Name, err)
+				continue
+			}
+		}
+	}
+
+	// Get list of all deleted ingresses
+	deletedIngresses, err := clientset.NetworkingV1().Ingresses(metav1.NamespaceAll).List(context.TODO(), metav1.ListOptions{
+		LabelSelector: "status.phase=Deleted",
+	})
+	if err != nil {
+		log.Fatalf("Error getting deleted ingresses: %v", err)
+	}
+
+	// Generate nginx config for deleted ingresses
+	if len(deletedIngresses.Items) > 0 {
+		fmt.Printf("\n# Deleted Ingresses:\n")
+		for _, ing := range deletedIngresses.Items {
+			conf := NginxConfig{
+				Ingress:   ing.Name,
+				TypeEvent: "DELETE",
+				Config:    "",
+			}
+			sendNginxConfig(conf)
+
 		}
 	}
 }
