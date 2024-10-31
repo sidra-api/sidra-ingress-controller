@@ -1,4 +1,4 @@
-module example.com/m
+module github.com/sidra-gateway/sidra-ingress-controller
 
 go 1.23.1
 
