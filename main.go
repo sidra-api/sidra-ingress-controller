@@ -34,7 +34,7 @@ func sendNginxConfig(config NginxConfig) error {
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("Received non-OK status code: %d", resp.StatusCode)
 	} else {
-		log.Printf("Successfully sent nginx config for ingress %s in namespace %s", config.Ingress, config.Namespace)
+		log.Printf("Successfully sent nginx config for ingress %s", config.Ingress)
 	}
 
 	return nil
@@ -59,6 +59,9 @@ func main() {
 
 	ingresses, err := clientset.NetworkingV1().Ingresses(metav1.NamespaceAll).List(context.TODO(), metav1.ListOptions{})
 	
+	if err != nil {
+		log.Fatalf("Error get ingress client: %v", err)
+	}
 	// Generate nginx config for ingresses in this namespace
 	if len(ingresses.Items) > 0 {		
 		for _, ing := range ingresses.Items {
@@ -92,7 +95,7 @@ func main() {
 
 			err := sendNginxConfig(conf)
 			if err != nil {
-				log.Printf("Error sending nginx config for ingress %s in namespace %s: %v", ing.Name, ns.Name, err)
+				log.Printf("Error sending nginx config for ingress %s , error : %v", ing.Name, err)
 				continue
 			}
 		}
