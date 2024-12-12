@@ -62,7 +62,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error get ingress client: %v", err)
 	}
-	// Generate nginx config for ingresses in this namespace
+	
 	if len(ingresses.Items) > 0 {		
 		for _, ing := range ingresses.Items {
 			conf := NginxConfig{				
